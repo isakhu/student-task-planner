@@ -1,344 +1,302 @@
-// ─── State ────────────────────────────────────────────────────────────────────
+// ─── State ────────────────────────────────────────────
 let activeFilter = '';
-let searchTimeout = null;
+let searchTimer  = null;
 
-// ─── Init ─────────────────────────────────────────────────────────────────────
+// ─── Boot ─────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-    loadUser();
-    loadTasks();
-    loadStats();
-    initDarkMode();
-    initModal();
-    initSearch();
-    initFilters();
-    initSidebar();
+  loadUser();
+  loadStats();
+  loadTasks();
+  initTheme();
+  initModal();
+  initSearch();
+  initFilters();
+  initSidebar();
+  // Set min date on deadline input
+  document.getElementById('tDeadline').min = new Date().toISOString().split('T')[0];
 });
 
-// ─── User ─────────────────────────────────────────────────────────────────────
+// ─── User ─────────────────────────────────────────────
 async function loadUser() {
-    try {
-        const res  = await fetch('/api/me');
-        if (!res.ok) { window.location.href = '/auth'; return; }
-        const data = await res.json();
-        document.getElementById('sidebarUsername').textContent = data.username;
-        document.getElementById('userAvatar').textContent = data.username[0].toUpperCase();
-    } catch {
-        window.location.href = '/auth';
-    }
+  const res = await fetch('/api/me');
+  if (!res.ok) { window.location.href = '/auth'; return; }
+  const { username } = await res.json();
+  document.getElementById('sbName').textContent   = username;
+  document.getElementById('sbAvatar').textContent = username[0].toUpperCase();
 }
 
 document.getElementById('logoutBtn').addEventListener('click', async () => {
-    await fetch('/api/logout', { method: 'POST' });
-    window.location.href = '/auth';
+  await fetch('/api/logout', { method: 'POST' });
+  window.location.href = '/auth';
 });
 
-// ─── Dark Mode ────────────────────────────────────────────────────────────────
-function initDarkMode() {
-    if (localStorage.getItem('darkMode') === 'true') {
-        document.body.classList.add('dark-mode');
-        document.getElementById('darkModeToggle').innerHTML = '<i class="fas fa-sun"></i>';
-    }
+// ─── Theme ────────────────────────────────────────────
+function initTheme() {
+  if (localStorage.getItem('dark') === '1') applyDark(true);
 }
-
-document.getElementById('darkModeToggle').addEventListener('click', () => {
-    document.body.classList.toggle('dark-mode');
-    const dark = document.body.classList.contains('dark-mode');
-    localStorage.setItem('darkMode', dark);
-    document.getElementById('darkModeToggle').innerHTML = dark
-        ? '<i class="fas fa-sun"></i>'
-        : '<i class="fas fa-moon"></i>';
+function applyDark(on) {
+  document.body.classList.toggle('dark', on);
+  document.getElementById('darkBtn').innerHTML = on
+    ? '<i class="fas fa-sun"></i>'
+    : '<i class="fas fa-moon"></i>';
+}
+document.getElementById('darkBtn').addEventListener('click', () => {
+  const on = !document.body.classList.contains('dark');
+  applyDark(on);
+  localStorage.setItem('dark', on ? '1' : '0');
 });
 
-// ─── Sidebar (mobile) ─────────────────────────────────────────────────────────
+// ─── Sidebar ──────────────────────────────────────────
 function initSidebar() {
-    document.getElementById('menuToggle').addEventListener('click', () => {
-        document.getElementById('sidebar').classList.toggle('open');
-    });
-
-    // Nav items
-    document.querySelectorAll('.nav-item').forEach(item => {
-        item.addEventListener('click', e => {
-            e.preventDefault();
-            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-            item.classList.add('active');
-            activeFilter = item.dataset.filter || '';
-            loadTasks();
-            document.getElementById('sidebar').classList.remove('open');
-        });
-    });
+  document.getElementById('menuBtn').addEventListener('click', () => {
+    document.getElementById('sidebar').classList.toggle('open');
+  });
+  document.addEventListener('click', e => {
+    const sb = document.getElementById('sidebar');
+    if (sb.classList.contains('open') &&
+        !sb.contains(e.target) &&
+        e.target !== document.getElementById('menuBtn')) {
+      sb.classList.remove('open');
+    }
+  });
 }
 
-// ─── Modal ────────────────────────────────────────────────────────────────────
+window.setFilter = function(btn, filter) {
+  document.querySelectorAll('.sb-item').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  activeFilter = filter;
+  const titles = {
+    '':                 ['All Tasks',       'Manage and track your study tasks'],
+    'status=pending':   ['Pending Tasks',   'Tasks you still need to complete'],
+    'status=completed': ['Completed Tasks', 'Tasks you have finished'],
+    'priority=High':    ['High Priority',   'Your most urgent tasks'],
+    'status=overdue':   ['Overdue Tasks',   'Tasks past their deadline'],
+  };
+  const [title, sub] = titles[filter] || ['Tasks', ''];
+  document.getElementById('pageTitle').textContent    = title;
+  document.getElementById('pageSubtitle').textContent = sub;
+  loadTasks();
+  document.getElementById('sidebar').classList.remove('open');
+};
+
+// ─── Modal ────────────────────────────────────────────
 function initModal() {
-    const overlay = document.getElementById('modalOverlay');
-    const open    = () => overlay.classList.add('show');
-    const close   = () => overlay.classList.remove('show');
+  const open  = () => document.getElementById('overlay').classList.add('show');
+  const close = () => {
+    document.getElementById('overlay').classList.remove('show');
+    document.getElementById('taskForm').reset();
+  };
+  document.getElementById('openModal').addEventListener('click', open);
+  document.getElementById('closeModal').addEventListener('click', close);
+  document.getElementById('cancelModal').addEventListener('click', close);
+  document.getElementById('overlay').addEventListener('click', e => {
+    if (e.target === document.getElementById('overlay')) close();
+  });
 
-    document.getElementById('openModalBtn').addEventListener('click', open);
-    document.getElementById('closeModalBtn').addEventListener('click', close);
-    document.getElementById('cancelBtn').addEventListener('click', close);
-
-    overlay.addEventListener('click', e => {
-        if (e.target === overlay) close();
+  document.getElementById('taskForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const body = {
+      title:    document.getElementById('tTitle').value.trim(),
+      deadline: document.getElementById('tDeadline').value,
+      priority: document.getElementById('tPriority').value,
+      category: document.getElementById('tCategory').value,
+    };
+    const res = await fetch('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
     });
-
-    // Set min date to today
-    document.getElementById('taskDeadline').min = new Date().toISOString().split('T')[0];
-
-    document.getElementById('taskForm').addEventListener('submit', async e => {
-        e.preventDefault();
-        const title    = document.getElementById('taskTitle').value.trim();
-        const deadline = document.getElementById('taskDeadline').value;
-        const priority = document.getElementById('taskPriority').value;
-        const category = document.getElementById('taskCategory').value;
-
-        if (!title || !deadline) return;
-
-        try {
-            const res = await fetch('/api/tasks', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ title, deadline, priority, category })
-            });
-
-            if (!res.ok) throw new Error();
-
-            document.getElementById('taskForm').reset();
-            close();
-            loadTasks();
-            loadStats();
-            showToast('Task added! 🎉', 'success');
-        } catch {
-            showToast('Error adding task', 'error');
-        }
-    });
+    if (!res.ok) { toast('Error adding task', 'error'); return; }
+    close();
+    loadTasks();
+    loadStats();
+    toast('Task added! 🎉', 'success');
+  });
 }
 
-// ─── Search ───────────────────────────────────────────────────────────────────
+// ─── Search & Filters ─────────────────────────────────
 function initSearch() {
-    document.getElementById('searchInput').addEventListener('input', e => {
-        clearTimeout(searchTimeout);
-        searchTimeout = setTimeout(() => loadTasks(), 300);
-    });
+  document.getElementById('searchInput').addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(loadTasks, 280);
+  });
 }
-
-// ─── Filters ──────────────────────────────────────────────────────────────────
 function initFilters() {
-    document.getElementById('filterPriority').addEventListener('change', loadTasks);
-    document.getElementById('filterCategory').addEventListener('change', loadTasks);
+  document.getElementById('fPriority').addEventListener('change', loadTasks);
+  document.getElementById('fCategory').addEventListener('change', loadTasks);
 }
 
-// ─── Build query string ───────────────────────────────────────────────────────
 function buildQuery() {
-    const params = new URLSearchParams();
-
-    // Active filter from sidebar
-    if (activeFilter) {
-        const [key, val] = activeFilter.split('=');
-        params.set(key, val);
-    }
-
-    const search   = document.getElementById('searchInput').value.trim();
-    const priority = document.getElementById('filterPriority').value;
-    const category = document.getElementById('filterCategory').value;
-
-    if (search)   params.set('search', search);
-    if (priority) params.set('priority', priority);
-    if (category) params.set('category', category);
-
-    return params.toString() ? '?' + params.toString() : '';
+  const p = new URLSearchParams();
+  if (activeFilter) {
+    const [k, v] = activeFilter.split('=');
+    p.set(k, v);
+  }
+  const s = document.getElementById('searchInput').value.trim();
+  const pr = document.getElementById('fPriority').value;
+  const ca = document.getElementById('fCategory').value;
+  if (s)  p.set('search', s);
+  if (pr) p.set('priority', pr);
+  if (ca) p.set('category', ca);
+  return p.toString() ? '?' + p : '';
 }
 
-// ─── Load Tasks ───────────────────────────────────────────────────────────────
+// ─── Load & Render Tasks ──────────────────────────────
 async function loadTasks() {
-    try {
-        const res   = await fetch('/api/tasks' + buildQuery());
-        const tasks = await res.json();
-        renderTasks(tasks);
-    } catch {
-        showToast('Error loading tasks', 'error');
-    }
+  const res   = await fetch('/api/tasks' + buildQuery());
+  const tasks = await res.json();
+  renderTasks(tasks);
 }
 
-// ─── Render Tasks ─────────────────────────────────────────────────────────────
 function renderTasks(tasks) {
-    const list  = document.getElementById('tasksList');
-    const empty = document.getElementById('emptyState');
+  const list  = document.getElementById('taskList');
+  const empty = document.getElementById('emptyState');
+  list.innerHTML = '';
 
-    list.innerHTML = '';
+  document.getElementById('taskCountBadge').textContent =
+    `${tasks.length} task${tasks.length !== 1 ? 's' : ''}`;
 
-    if (tasks.length === 0) {
-        empty.classList.add('show');
-        document.getElementById('taskCount').textContent = '0 tasks';
-        return;
-    }
-
-    empty.classList.remove('show');
-    document.getElementById('taskCount').textContent = `${tasks.length} task${tasks.length !== 1 ? 's' : ''}`;
-
-    tasks.forEach(task => {
-        const card = createTaskCard(task);
-        list.appendChild(card);
-    });
+  if (!tasks.length) { empty.classList.add('show'); return; }
+  empty.classList.remove('show');
+  tasks.forEach(t => list.appendChild(makeCard(t)));
 }
 
-// ─── Create Task Card ─────────────────────────────────────────────────────────
-function createTaskCard(task) {
-    const card = document.createElement('div');
-    card.className = 'task-card' + (task.completed ? ' completed' : '');
+function makeCard(t) {
+  const div = document.createElement('div');
+  div.className = 'task-card' + (t.completed ? ' done' : '');
 
-    const { text: deadlineText, cls: deadlineCls } = formatDeadline(task.deadline);
+  const { label, cls } = deadlineInfo(t.deadline);
 
-    card.innerHTML = `
-        <div class="task-check" onclick="toggleTask(${task.id}, ${!task.completed})">
-            ${task.completed ? '<i class="fas fa-check"></i>' : ''}
-        </div>
-        <div class="task-body">
-            <div class="task-title">${escapeHtml(task.title)}</div>
-            <div class="task-meta">
-                <span class="${deadlineCls}">
-                    <i class="fas fa-calendar-alt"></i> ${deadlineText}
-                </span>
-                <span class="priority-badge priority-${task.priority}">${task.priority}</span>
-                <span class="category-badge">${task.category}</span>
-            </div>
-        </div>
-        <div class="task-actions">
-            <button class="btn-delete" onclick="deleteTask(${task.id})" title="Delete">
-                <i class="fas fa-trash"></i>
-            </button>
-        </div>
-    `;
-
-    return card;
+  div.innerHTML = `
+    <div class="check" onclick="toggleTask(${t.id},${!t.completed})">
+      ${t.completed ? '<i class="fas fa-check"></i>' : ''}
+    </div>
+    <div class="task-body">
+      <div class="task-title">${esc(t.title)}</div>
+      <div class="task-tags">
+        <span class="badge badge-date ${cls}"><i class="fas fa-calendar-alt"></i> ${label}</span>
+        <span class="badge badge-pri-${t.priority}">${t.priority}</span>
+        <span class="badge badge-cat">${t.category}</span>
+      </div>
+    </div>
+    <div class="task-actions">
+      <button class="task-btn" onclick="deleteTask(${t.id})" title="Delete">
+        <i class="fas fa-trash"></i>
+      </button>
+    </div>`;
+  return div;
 }
 
-// ─── Format Deadline ──────────────────────────────────────────────────────────
-function formatDeadline(dateStr) {
-    const deadline = new Date(dateStr + 'T00:00:00');
-    const today    = new Date();
-    today.setHours(0, 0, 0, 0);
-    const diff = Math.ceil((deadline - today) / 86400000);
+function deadlineInfo(dateStr) {
+  const d    = new Date(dateStr + 'T00:00:00');
+  const now  = new Date(); now.setHours(0,0,0,0);
+  const diff = Math.ceil((d - now) / 86400000);
+  const fmt  = d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
 
-    const formatted = deadline.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-
-    if (diff < 0)  return { text: `Overdue · ${formatted}`,   cls: 'deadline-overdue' };
-    if (diff === 0) return { text: `Due today · ${formatted}`, cls: 'deadline-today' };
-    if (diff === 1) return { text: `Tomorrow · ${formatted}`,  cls: 'deadline-tomorrow' };
-    return { text: `${diff} days · ${formatted}`, cls: '' };
+  if (diff < 0)  return { label: `Overdue · ${fmt}`,   cls: 'overdue' };
+  if (diff === 0) return { label: `Due today · ${fmt}`, cls: 'today' };
+  if (diff === 1) return { label: `Tomorrow · ${fmt}`,  cls: 'soon' };
+  if (diff <= 3)  return { label: `${diff} days · ${fmt}`, cls: 'soon' };
+  return { label: fmt, cls: '' };
 }
 
-// ─── Toggle Task ──────────────────────────────────────────────────────────────
-async function toggleTask(id, completed) {
-    try {
-        await fetch(`/api/tasks/${id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ completed })
-        });
-        loadTasks();
-        loadStats();
-        if (completed) showToast('Task completed! 🎉', 'success');
-    } catch {
-        showToast('Error updating task', 'error');
-    }
-}
+// ─── Toggle / Delete ──────────────────────────────────
+window.toggleTask = async function(id, completed) {
+  await fetch(`/api/tasks/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ completed })
+  });
+  loadTasks(); loadStats();
+  if (completed) toast('Task completed! 🎉', 'success');
+};
 
-// ─── Delete Task ──────────────────────────────────────────────────────────────
-async function deleteTask(id) {
-    if (!confirm('Delete this task?')) return;
-    try {
-        await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
-        loadTasks();
-        loadStats();
-        showToast('Task deleted', 'info');
-    } catch {
-        showToast('Error deleting task', 'error');
-    }
-}
+window.deleteTask = async function(id) {
+  if (!confirm('Delete this task?')) return;
+  await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
+  loadTasks(); loadStats();
+  toast('Task deleted', 'info');
+};
 
-// ─── Stats & Progress ─────────────────────────────────────────────────────────
+// ─── Stats ────────────────────────────────────────────
 async function loadStats() {
-    try {
-        const res  = await fetch('/api/stats');
-        const data = await res.json();
+  const res  = await fetch('/api/stats');
+  const data = await res.json();
 
-        animateNumber('totalTasks',     data.total);
-        animateNumber('completedTasks', data.completed);
-        animateNumber('pendingTasks',   data.pending);
-        animateNumber('overdueTasks',   data.overdue);
+  countUp('sTotal',   data.total);
+  countUp('sDone',    data.completed);
+  countUp('sPending', data.pending);
+  countUp('sOverdue', data.overdue);
 
-        renderProgress(data.categories);
-        renderCategorySidebar(data.categories);
-    } catch {}
+  // Sidebar badges
+  document.getElementById('cnt-all').textContent     = data.total;
+  document.getElementById('cnt-pending').textContent = data.pending;
+  document.getElementById('cnt-done').textContent    = data.completed;
+  document.getElementById('cnt-overdue').textContent = data.overdue;
+
+  renderProgress(data.categories);
+  renderCatSidebar(data.categories);
 }
 
-function renderProgress(categories) {
-    const section = document.getElementById('progressSection');
-    section.innerHTML = '';
-
-    Object.entries(categories).forEach(([name, data]) => {
-        const pct = data.total > 0 ? Math.round((data.completed / data.total) * 100) : 0;
-        const card = document.createElement('div');
-        card.className = 'progress-card';
-        card.innerHTML = `
-            <div class="progress-card-header">
-                <span>${name}</span>
-                <span class="progress-pct">${pct}%</span>
-            </div>
-            <div class="progress-bar-track">
-                <div class="progress-bar-fill" style="width: ${pct}%"></div>
-            </div>
-            <p class="progress-sub">${data.completed} of ${data.total} done</p>
-        `;
-        section.appendChild(card);
-    });
+function renderProgress(cats) {
+  const grid = document.getElementById('progressGrid');
+  grid.innerHTML = '';
+  Object.entries(cats).forEach(([name, d]) => {
+    const pct = d.total ? Math.round(d.completed / d.total * 100) : 0;
+    const el  = document.createElement('div');
+    el.className = 'prog-card';
+    el.innerHTML = `
+      <div class="prog-head">
+        <span class="prog-name">${name}</span>
+        <span class="prog-pct">${pct}%</span>
+      </div>
+      <div class="prog-track">
+        <div class="prog-fill" style="width:${pct}%"></div>
+      </div>
+      <p class="prog-sub">${d.completed} of ${d.total} done</p>`;
+    grid.appendChild(el);
+  });
 }
 
-function renderCategorySidebar(categories) {
-    const container = document.getElementById('sidebarCategories');
-    container.innerHTML = '<p class="sidebar-label">Categories</p>';
-
-    Object.entries(categories).forEach(([name, data]) => {
-        const item = document.createElement('a');
-        item.href = '#';
-        item.className = 'cat-item';
-        item.innerHTML = `<span>${name}</span><span class="cat-badge">${data.total}</span>`;
-        item.addEventListener('click', e => {
-            e.preventDefault();
-            document.getElementById('filterCategory').value = name;
-            loadTasks();
-        });
-        container.appendChild(item);
-    });
+function renderCatSidebar(cats) {
+  const sec = document.getElementById('sbCats');
+  sec.innerHTML = '<p class="sb-label">Categories</p>';
+  Object.entries(cats).forEach(([name, d]) => {
+    const btn = document.createElement('button');
+    btn.className = 'sb-item';
+    btn.innerHTML = `<i class="fas fa-tag"></i> ${name} <span class="sb-count">${d.total}</span>`;
+    btn.onclick = () => {
+      document.getElementById('fCategory').value = name;
+      loadTasks();
+      document.getElementById('sidebar').classList.remove('open');
+    };
+    sec.appendChild(btn);
+  });
 }
 
-// ─── Animate Number ───────────────────────────────────────────────────────────
-function animateNumber(id, target) {
-    const el    = document.getElementById(id);
-    const start = parseInt(el.textContent) || 0;
-    const diff  = target - start;
-    const steps = 20;
-    let   step  = 0;
-
-    const timer = setInterval(() => {
-        step++;
-        el.textContent = Math.round(start + (diff * step / steps));
-        if (step >= steps) clearInterval(timer);
-    }, 16);
+// ─── Helpers ──────────────────────────────────────────
+function countUp(id, target) {
+  const el = document.getElementById(id);
+  const start = parseInt(el.textContent) || 0;
+  const diff  = target - start;
+  let   step  = 0;
+  const timer = setInterval(() => {
+    step++;
+    el.textContent = Math.round(start + diff * step / 20);
+    if (step >= 20) clearInterval(timer);
+  }, 16);
 }
 
-// ─── Toast ────────────────────────────────────────────────────────────────────
-function showToast(msg, type = 'info') {
-    const toast = document.getElementById('toast');
-    toast.textContent = msg;
-    toast.className = `toast ${type} show`;
-    setTimeout(() => toast.classList.remove('show'), 3000);
+function toast(msg, type = 'info') {
+  const el = document.getElementById('toast');
+  const icons = { success: 'fa-check-circle', error: 'fa-times-circle', info: 'fa-info-circle' };
+  el.innerHTML = `<i class="fas ${icons[type]}"></i> ${msg}`;
+  el.className = `toast ${type} show`;
+  setTimeout(() => el.classList.remove('show'), 3000);
 }
 
-// ─── Escape HTML ──────────────────────────────────────────────────────────────
-function escapeHtml(text) {
-    const d = document.createElement('div');
-    d.textContent = text;
-    return d.innerHTML;
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
 }
