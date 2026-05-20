@@ -4,98 +4,197 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Student Task Planner</title>
-    
-    <!-- Link to our CSS file -->
-    <!-- Flask serves static files from the 'static' folder -->
-    <!-- url_for() generates the correct URL for static files -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    
-    <!-- Font Awesome for icons -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
-    <!-- Main container for the entire app -->
-    <div class="container">
-        
-        <!-- Header section with title and dark mode toggle -->
-        <header>
-            <h1><i class="fas fa-graduation-cap"></i> Student Task Planner</h1>
-            <button id="darkModeToggle" class="dark-mode-btn">
-                <i class="fas fa-moon"></i>
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <div class="logo-icon"><i class="fas fa-graduation-cap"></i></div>
+            <span>TaskPlanner</span>
+        </div>
+
+        <nav class="sidebar-nav">
+            <a href="#" class="nav-item active" data-filter="">
+                <i class="fas fa-home"></i> All Tasks
+            </a>
+            <a href="#" class="nav-item" data-filter="status=pending">
+                <i class="fas fa-clock"></i> Pending
+            </a>
+            <a href="#" class="nav-item" data-filter="status=completed">
+                <i class="fas fa-check-circle"></i> Completed
+            </a>
+            <a href="#" class="nav-item" data-filter="priority=High">
+                <i class="fas fa-fire"></i> High Priority
+            </a>
+        </nav>
+
+        <div class="sidebar-categories" id="sidebarCategories">
+            <p class="sidebar-label">Categories</p>
+            <!-- Filled by JS -->
+        </div>
+
+        <div class="sidebar-footer">
+            <div class="user-info">
+                <div class="user-avatar" id="userAvatar">U</div>
+                <span id="sidebarUsername">User</span>
+            </div>
+            <button class="logout-btn" id="logoutBtn" title="Logout">
+                <i class="fas fa-sign-out-alt"></i>
             </button>
+        </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="main-content">
+
+        <!-- Top bar -->
+        <header class="topbar">
+            <button class="menu-toggle" id="menuToggle">
+                <i class="fas fa-bars"></i>
+            </button>
+            <div class="search-bar">
+                <i class="fas fa-search"></i>
+                <input type="text" id="searchInput" placeholder="Search tasks...">
+            </div>
+            <div class="topbar-actions">
+                <button class="dark-mode-btn" id="darkModeToggle" title="Toggle dark mode">
+                    <i class="fas fa-moon"></i>
+                </button>
+                <button class="add-task-btn" id="openModalBtn">
+                    <i class="fas fa-plus"></i> New Task
+                </button>
+            </div>
         </header>
 
-        <!-- Dashboard showing task statistics -->
-        <div class="dashboard">
-            <div class="stat-card">
-                <i class="fas fa-tasks"></i>
-                <div>
+        <!-- Dashboard stats -->
+        <section class="dashboard">
+            <div class="stat-card" style="--accent: #6366f1">
+                <div class="stat-icon"><i class="fas fa-tasks"></i></div>
+                <div class="stat-info">
                     <h3 id="totalTasks">0</h3>
                     <p>Total Tasks</p>
                 </div>
+                <div class="stat-ring" id="totalRing"></div>
             </div>
-            <div class="stat-card">
-                <i class="fas fa-check-circle"></i>
-                <div>
+            <div class="stat-card" style="--accent: #10b981">
+                <div class="stat-icon"><i class="fas fa-check-circle"></i></div>
+                <div class="stat-info">
                     <h3 id="completedTasks">0</h3>
                     <p>Completed</p>
                 </div>
             </div>
-            <div class="stat-card">
-                <i class="fas fa-clock"></i>
-                <div>
+            <div class="stat-card" style="--accent: #f59e0b">
+                <div class="stat-icon"><i class="fas fa-hourglass-half"></i></div>
+                <div class="stat-info">
                     <h3 id="pendingTasks">0</h3>
                     <p>Pending</p>
                 </div>
             </div>
+            <div class="stat-card" style="--accent: #ef4444">
+                <div class="stat-icon"><i class="fas fa-exclamation-circle"></i></div>
+                <div class="stat-info">
+                    <h3 id="overdueTasks">0</h3>
+                    <p>Overdue</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Progress bars per category -->
+        <section class="progress-section" id="progressSection"></section>
+
+        <!-- Filter bar -->
+        <div class="filter-bar">
+            <div class="filter-group">
+                <select id="filterPriority">
+                    <option value="">All Priorities</option>
+                    <option value="High">🔴 High</option>
+                    <option value="Medium">🟡 Medium</option>
+                    <option value="Low">🟢 Low</option>
+                </select>
+                <select id="filterCategory">
+                    <option value="">All Categories</option>
+                    <option value="General">General</option>
+                    <option value="Math">Math</option>
+                    <option value="Science">Science</option>
+                    <option value="English">English</option>
+                    <option value="History">History</option>
+                    <option value="Project">Project</option>
+                    <option value="Exam">Exam</option>
+                    <option value="Assignment">Assignment</option>
+                </select>
+            </div>
+            <p class="task-count" id="taskCount">0 tasks</p>
         </div>
 
-        <!-- Form to add new tasks -->
-        <div class="add-task-section">
-            <h2>Add New Task</h2>
-            <form id="taskForm">
+        <!-- Tasks list -->
+        <section class="tasks-section">
+            <div id="tasksList"></div>
+            <div class="empty-state" id="emptyState">
+                <div class="empty-icon"><i class="fas fa-clipboard-list"></i></div>
+                <h3>No tasks yet</h3>
+                <p>Click "New Task" to get started!</p>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Add Task Modal -->
+    <div class="modal-overlay" id="modalOverlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h2><i class="fas fa-plus-circle"></i> New Task</h2>
+                <button class="modal-close" id="closeModalBtn"><i class="fas fa-times"></i></button>
+            </div>
+            <form id="taskForm" class="modal-form">
                 <div class="form-group">
-                    <label for="taskTitle">
-                        <i class="fas fa-pencil-alt"></i> Task Title
-                    </label>
-                    <input 
-                        type="text" 
-                        id="taskTitle" 
-                        placeholder="Enter your task..." 
-                        required
-                    >
+                    <label>Task Title</label>
+                    <input type="text" id="taskTitle" placeholder="e.g. Study for Math exam" required>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Deadline</label>
+                        <input type="date" id="taskDeadline" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Priority</label>
+                        <select id="taskPriority">
+                            <option value="High">🔴 High</option>
+                            <option value="Medium" selected>🟡 Medium</option>
+                            <option value="Low">🟢 Low</option>
+                        </select>
+                    </div>
                 </div>
                 <div class="form-group">
-                    <label for="taskDeadline">
-                        <i class="fas fa-calendar-alt"></i> Deadline
-                    </label>
-                    <input 
-                        type="date" 
-                        id="taskDeadline" 
-                        required
-                    >
+                    <label>Category</label>
+                    <select id="taskCategory">
+                        <option value="General">General</option>
+                        <option value="Math">Math</option>
+                        <option value="Science">Science</option>
+                        <option value="English">English</option>
+                        <option value="History">History</option>
+                        <option value="Project">Project</option>
+                        <option value="Exam">Exam</option>
+                        <option value="Assignment">Assignment</option>
+                    </select>
                 </div>
-                <button type="submit" class="btn btn-primary">
-                    <i class="fas fa-plus"></i> Add Task
-                </button>
+                <div class="modal-actions">
+                    <button type="button" class="btn-cancel" id="cancelBtn">Cancel</button>
+                    <button type="submit" class="btn-submit">
+                        <i class="fas fa-plus"></i> Add Task
+                    </button>
+                </div>
             </form>
-        </div>
-
-        <!-- Section to display all tasks -->
-        <div class="tasks-section">
-            <h2>My Tasks</h2>
-            <div id="tasksList" class="tasks-list">
-                <!-- Tasks will be dynamically added here by JavaScript -->
-            </div>
-            <div id="emptyState" class="empty-state">
-                <i class="fas fa-clipboard-list"></i>
-                <p>No tasks yet. Add your first task above!</p>
-            </div>
         </div>
     </div>
 
-    <!-- Link to our JavaScript file -->
-    <!-- This must be at the end so the HTML loads first -->
+    <!-- Toast notification -->
+    <div class="toast" id="toast"></div>
+
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 </body>
 </html>

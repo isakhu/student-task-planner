@@ -1,128 +1,235 @@
-# Import necessary Flask modules
-from flask import Flask, render_template, request, jsonify
-import json
-import os
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for
+from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
+from functools import wraps
+import os
 
-# Create a Flask application instance
-# __name__ tells Flask where to find templates and static files
 app = Flask(__name__)
 
-# Define the path for our JSON file where tasks will be saved
-TASKS_FILE = 'tasks.json'
+# Secret key for session management
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 
-# Helper function to load tasks from the JSON file
-def load_tasks():
-    """
-    Load tasks from the JSON file.
-    If the file doesn't exist, return an empty list.
-    """
-    if os.path.exists(TASKS_FILE):
-        with open(TASKS_FILE, 'r') as file:
-            return json.load(file)
-    return []
+# SQLite database configuration
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///tasks.db')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Helper function to save tasks to the JSON file
-def save_tasks(tasks):
-    """
-    Save the tasks list to the JSON file.
-    This persists data even after the server restarts.
-    """
-    with open(TASKS_FILE, 'w') as file:
-        json.dump(tasks, file, indent=4)
+db = SQLAlchemy(app)
 
-# Route for the home page
+# ─── Database Models ──────────────────────────────────────────────────────────
+
+class User(db.Model):
+    id       = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    email    = db.Column(db.String(120), unique=True, nullable=False)
+    password = db.Column(db.String(200), nullable=False)
+    tasks    = db.relationship('Task', backref='user', lazy=True, cascade='all, delete-orphan')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class Task(db.Model):
+    id         = db.Column(db.Integer, primary_key=True)
+    title      = db.Column(db.String(200), nullable=False)
+    deadline   = db.Column(db.String(20), nullable=False)
+    category   = db.Column(db.String(50), default='General')
+    priority   = db.Column(db.String(20), default='Medium')
+    completed  = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    user_id    = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+
+    def to_dict(self):
+        return {
+            'id':         self.id,
+            'title':      self.title,
+            'deadline':   self.deadline,
+            'category':   self.category,
+            'priority':   self.priority,
+            'completed':  self.completed,
+            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S')
+        }
+
+# ─── Auth Decorator ───────────────────────────────────────────────────────────
+
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if 'user_id' not in session:
+            return jsonify({'error': 'Unauthorized'}), 401
+        return f(*args, **kwargs)
+    return decorated
+
+# ─── Page Routes ──────────────────────────────────────────────────────────────
+
 @app.route('/')
 def index():
-    """
-    This route handles requests to the home page (/).
-    It renders the index.html template.
-    Flask automatically looks for templates in the 'templates' folder.
-    """
-    return render_template('index.html')
+    if 'user_id' in session:
+        return render_template('index.html')
+    return redirect(url_for('auth_page'))
 
-# API route to get all tasks
+@app.route('/auth')
+def auth_page():
+    if 'user_id' in session:
+        return redirect(url_for('index'))
+    return render_template('auth.html')
+
+# ─── Auth API ─────────────────────────────────────────────────────────────────
+
+@app.route('/api/register', methods=['POST'])
+def register():
+    data = request.get_json()
+    username = data.get('username', '').strip()
+    email    = data.get('email', '').strip()
+    password = data.get('password', '')
+
+    if not username or not email or not password:
+        return jsonify({'error': 'All fields are required'}), 400
+    if len(password) < 6:
+        return jsonify({'error': 'Password must be at least 6 characters'}), 400
+    if User.query.filter_by(username=username).first():
+        return jsonify({'error': 'Username already taken'}), 400
+    if User.query.filter_by(email=email).first():
+        return jsonify({'error': 'Email already registered'}), 400
+
+    user = User(
+        username=username,
+        email=email,
+        password=generate_password_hash(password)
+    )
+    db.session.add(user)
+    db.session.commit()
+
+    session['user_id'] = user.id
+    session['username'] = user.username
+    return jsonify({'message': 'Account created!', 'username': user.username}), 201
+
+@app.route('/api/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+
+    user = User.query.filter_by(username=username).first()
+    if not user or not check_password_hash(user.password, password):
+        return jsonify({'error': 'Invalid username or password'}), 401
+
+    session['user_id'] = user.id
+    session['username'] = user.username
+    return jsonify({'message': 'Logged in!', 'username': user.username})
+
+@app.route('/api/logout', methods=['POST'])
+def logout():
+    session.clear()
+    return jsonify({'message': 'Logged out'})
+
+@app.route('/api/me')
+@login_required
+def me():
+    return jsonify({'username': session.get('username')})
+
+# ─── Tasks API ────────────────────────────────────────────────────────────────
+
 @app.route('/api/tasks', methods=['GET'])
+@login_required
 def get_tasks():
-    """
-    This route returns all tasks as JSON.
-    JavaScript will fetch this data to display tasks on the page.
-    """
-    tasks = load_tasks()
-    return jsonify(tasks)
+    search   = request.args.get('search', '').lower()
+    category = request.args.get('category', '')
+    priority = request.args.get('priority', '')
+    status   = request.args.get('status', '')
 
-# API route to add a new task
+    query = Task.query.filter_by(user_id=session['user_id'])
+
+    if search:
+        query = query.filter(Task.title.ilike(f'%{search}%'))
+    if category:
+        query = query.filter_by(category=category)
+    if priority:
+        query = query.filter_by(priority=priority)
+    if status == 'completed':
+        query = query.filter_by(completed=True)
+    elif status == 'pending':
+        query = query.filter_by(completed=False)
+
+    tasks = query.order_by(Task.created_at.desc()).all()
+    return jsonify([t.to_dict() for t in tasks])
+
 @app.route('/api/tasks', methods=['POST'])
+@login_required
 def add_task():
-    """
-    This route receives task data from the frontend,
-    adds it to our tasks list, and saves it.
-    """
-    # Get JSON data sent from JavaScript
-    task_data = request.get_json()
-    
-    # Load existing tasks
-    tasks = load_tasks()
-    
-    # Create a new task with a unique ID
-    new_task = {
-        'id': len(tasks) + 1,  # Simple ID generation
-        'title': task_data.get('title'),
-        'deadline': task_data.get('deadline'),
-        'completed': False,
-        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    }
-    
-    # Add the new task to the list
-    tasks.append(new_task)
-    
-    # Save to file
-    save_tasks(tasks)
-    
-    # Return the new task as JSON
-    return jsonify(new_task), 201
+    data = request.get_json()
+    if not data.get('title') or not data.get('deadline'):
+        return jsonify({'error': 'Title and deadline are required'}), 400
 
-# API route to update a task (mark as completed/uncompleted)
+    task = Task(
+        title    = data['title'].strip(),
+        deadline = data['deadline'],
+        category = data.get('category', 'General'),
+        priority = data.get('priority', 'Medium'),
+        user_id  = session['user_id']
+    )
+    db.session.add(task)
+    db.session.commit()
+    return jsonify(task.to_dict()), 201
+
 @app.route('/api/tasks/<int:task_id>', methods=['PUT'])
+@login_required
 def update_task(task_id):
-    """
-    This route updates a specific task.
-    The task_id comes from the URL.
-    """
-    tasks = load_tasks()
-    
-    # Find the task with the matching ID
-    for task in tasks:
-        if task['id'] == task_id:
-            # Update the completed status
-            task_data = request.get_json()
-            task['completed'] = task_data.get('completed', task['completed'])
-            save_tasks(tasks)
-            return jsonify(task)
-    
-    # If task not found, return error
-    return jsonify({'error': 'Task not found'}), 404
+    task = Task.query.filter_by(id=task_id, user_id=session['user_id']).first()
+    if not task:
+        return jsonify({'error': 'Task not found'}), 404
 
-# API route to delete a task
+    data = request.get_json()
+    if 'completed' in data:
+        task.completed = data['completed']
+    if 'title' in data:
+        task.title = data['title']
+    if 'priority' in data:
+        task.priority = data['priority']
+
+    db.session.commit()
+    return jsonify(task.to_dict())
+
 @app.route('/api/tasks/<int:task_id>', methods=['DELETE'])
+@login_required
 def delete_task(task_id):
-    """
-    This route deletes a task with the specified ID.
-    """
-    tasks = load_tasks()
-    
-    # Filter out the task to delete
-    tasks = [task for task in tasks if task['id'] != task_id]
-    
-    save_tasks(tasks)
-    return jsonify({'message': 'Task deleted successfully'})
+    task = Task.query.filter_by(id=task_id, user_id=session['user_id']).first()
+    if not task:
+        return jsonify({'error': 'Task not found'}), 404
 
-# Run the Flask application
+    db.session.delete(task)
+    db.session.commit()
+    return jsonify({'message': 'Task deleted'})
+
+@app.route('/api/stats')
+@login_required
+def get_stats():
+    tasks     = Task.query.filter_by(user_id=session['user_id']).all()
+    total     = len(tasks)
+    completed = sum(1 for t in tasks if t.completed)
+    pending   = total - completed
+    overdue   = sum(1 for t in tasks if not t.completed and t.deadline < datetime.now().strftime('%Y-%m-%d'))
+
+    # Progress per category
+    categories = {}
+    for t in tasks:
+        if t.category not in categories:
+            categories[t.category] = {'total': 0, 'completed': 0}
+        categories[t.category]['total'] += 1
+        if t.completed:
+            categories[t.category]['completed'] += 1
+
+    return jsonify({
+        'total':      total,
+        'completed':  completed,
+        'pending':    pending,
+        'overdue':    overdue,
+        'categories': categories
+    })
+
+# ─── Init DB & Run ────────────────────────────────────────────────────────────
+
+with app.app_context():
+    db.create_all()
+
 if __name__ == '__main__':
-    # debug=True enables auto-reload and better error messages
-    # This should be False in production
-    # For deployment, use environment variable to control debug mode
-    import os
     debug_mode = os.environ.get('FLASK_DEBUG', 'True') == 'True'
     port = int(os.environ.get('PORT', 5000))
     app.run(debug=debug_mode, host='0.0.0.0', port=port)

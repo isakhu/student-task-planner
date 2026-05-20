@@ -1,342 +1,344 @@
-// Wait for the DOM to fully load before running JavaScript
-document.addEventListener('DOMContentLoaded', function() {
-    
-    // Get references to HTML elements we'll need
-    const taskForm = document.getElementById('taskForm');
-    const taskTitle = document.getElementById('taskTitle');
-    const taskDeadline = document.getElementById('taskDeadline');
-    const tasksList = document.getElementById('tasksList');
-    const darkModeToggle = document.getElementById('darkModeToggle');
-    
-    // Dashboard stat elements
-    const totalTasksEl = document.getElementById('totalTasks');
-    const completedTasksEl = document.getElementById('completedTasks');
-    const pendingTasksEl = document.getElementById('pendingTasks');
-    
-    // Initialize the app
-    init();
-    
-    /**
-     * Initialize the application
-     * Load tasks and set up dark mode
-     */
-    function init() {
-        loadTasks();
-        loadDarkModePreference();
-    }
-    
-    /**
-     * Load dark mode preference from localStorage
-     * localStorage saves data in the browser even after closing
-     */
-    function loadDarkModePreference() {
-        const isDarkMode = localStorage.getItem('darkMode') === 'true';
-        if (isDarkMode) {
-            document.body.classList.add('dark-mode');
-            darkModeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-    }
-    
-    /**
-     * Toggle dark mode on/off
-     */
-    darkModeToggle.addEventListener('click', function() {
-        document.body.classList.toggle('dark-mode');
-        const isDarkMode = document.body.classList.contains('dark-mode');
-        
-        // Save preference to localStorage
-        localStorage.setItem('darkMode', isDarkMode);
-        
-        // Change icon
-        if (isDarkMode) {
-            darkModeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        } else {
-            darkModeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-        }
-    });
-    
-    /**
-     * Handle form submission to add a new task
-     */
-    taskForm.addEventListener('submit', function(e) {
-        // Prevent the default form submission (page reload)
-        e.preventDefault();
-        
-        // Get values from form inputs
-        const title = taskTitle.value.trim();
-        const deadline = taskDeadline.value;
-        
-        // Validate inputs
-        if (!title || !deadline) {
-            alert('Please fill in all fields!');
-            return;
-        }
-        
-        // Create task object
-        const taskData = {
-            title: title,
-            deadline: deadline
-        };
-        
-        // Send POST request to Flask backend
-        fetch('/api/tasks', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(taskData)
-        })
-        .then(response => response.json())
-        .then(data => {
-            // Clear form inputs
-            taskTitle.value = '';
-            taskDeadline.value = '';
-            
-            // Reload tasks to show the new one
-            loadTasks();
-            
-            // Show success message
-            showNotification('Task added successfully!', 'success');
-        })
-        .catch(error => {
-            console.error('Error adding task:', error);
-            showNotification('Error adding task!', 'error');
-        });
-    });
-    
-    /**
-     * Load all tasks from the backend
-     * This function makes a GET request to our Flask API
-     */
-    function loadTasks() {
-        fetch('/api/tasks')
-            .then(response => response.json())
-            .then(tasks => {
-                displayTasks(tasks);
-                updateDashboard(tasks);
-            })
-            .catch(error => {
-                console.error('Error loading tasks:', error);
-            });
-    }
-    
-    /**
-     * Display tasks in the UI
-     * @param {Array} tasks - Array of task objects
-     */
-    function displayTasks(tasks) {
-        // Clear existing tasks
-        tasksList.innerHTML = '';
-        
-        // If no tasks, the empty state will show automatically
-        if (tasks.length === 0) {
-            return;
-        }
-        
-        // Create HTML for each task
-        tasks.forEach(task => {
-            const taskCard = createTaskCard(task);
-            tasksList.appendChild(taskCard);
-        });
-    }
-    
-    /**
-     * Create HTML element for a single task
-     * @param {Object} task - Task object with id, title, deadline, completed
-     * @returns {HTMLElement} - Task card element
-     */
-    function createTaskCard(task) {
-        // Create main task card div
-        const taskCard = document.createElement('div');
-        taskCard.className = 'task-card';
-        if (task.completed) {
-            taskCard.classList.add('completed');
-        }
-        
-        // Format the deadline date
-        const deadlineDate = new Date(task.deadline);
-        const formattedDeadline = deadlineDate.toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric'
-        });
-        
-        // Calculate days until deadline
-        const today = new Date();
-        const daysUntil = Math.ceil((deadlineDate - today) / (1000 * 60 * 60 * 24));
-        let deadlineClass = '';
-        let deadlineText = '';
-        
-        if (daysUntil < 0) {
-            deadlineText = 'Overdue';
-            deadlineClass = 'overdue';
-        } else if (daysUntil === 0) {
-            deadlineText = 'Due today';
-            deadlineClass = 'today';
-        } else if (daysUntil === 1) {
-            deadlineText = 'Due tomorrow';
-            deadlineClass = 'tomorrow';
-        } else {
-            deadlineText = `${daysUntil} days left`;
-        }
-        
-        // Build the HTML structure
-        taskCard.innerHTML = `
-            <div class="task-info">
-                <h3>${escapeHtml(task.title)}</h3>
-                <div class="task-meta">
-                    <span>
-                        <i class="fas fa-calendar"></i>
-                        ${formattedDeadline}
-                    </span>
-                    <span class="${deadlineClass}">
-                        <i class="fas fa-clock"></i>
-                        ${deadlineText}
-                    </span>
-                </div>
-            </div>
-            <div class="task-actions">
-                <button class="btn-complete" onclick="toggleTask(${task.id}, ${!task.completed})" title="${task.completed ? 'Mark as incomplete' : 'Mark as complete'}">
-                    <i class="fas fa-${task.completed ? 'undo' : 'check'}"></i>
-                </button>
-                <button class="btn-delete" onclick="deleteTask(${task.id})" title="Delete task">
-                    <i class="fas fa-trash"></i>
-                </button>
-            </div>
-        `;
-        
-        return taskCard;
-    }
-    
-    /**
-     * Update dashboard statistics
-     * @param {Array} tasks - Array of task objects
-     */
-    function updateDashboard(tasks) {
-        const total = tasks.length;
-        const completed = tasks.filter(task => task.completed).length;
-        const pending = total - completed;
-        
-        // Update the numbers with animation
-        animateValue(totalTasksEl, parseInt(totalTasksEl.textContent) || 0, total, 500);
-        animateValue(completedTasksEl, parseInt(completedTasksEl.textContent) || 0, completed, 500);
-        animateValue(pendingTasksEl, parseInt(pendingTasksEl.textContent) || 0, pending, 500);
-    }
-    
-    /**
-     * Animate number changes in dashboard
-     * @param {HTMLElement} element - Element to update
-     * @param {number} start - Starting number
-     * @param {number} end - Ending number
-     * @param {number} duration - Animation duration in ms
-     */
-    function animateValue(element, start, end, duration) {
-        const range = end - start;
-        const increment = range / (duration / 16); // 60 FPS
-        let current = start;
-        
-        const timer = setInterval(() => {
-            current += increment;
-            if ((increment > 0 && current >= end) || (increment < 0 && current <= end)) {
-                current = end;
-                clearInterval(timer);
-            }
-            element.textContent = Math.round(current);
-        }, 16);
-    }
-    
-    /**
-     * Toggle task completion status
-     * This function is called from the HTML onclick attribute
-     * @param {number} taskId - ID of the task to toggle
-     * @param {boolean} completed - New completion status
-     */
-    window.toggleTask = function(taskId, completed) {
-        fetch(`/api/tasks/${taskId}`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ completed: completed })
-        })
-        .then(response => response.json())
-        .then(data => {
-            loadTasks();
-            showNotification(completed ? 'Task completed! 🎉' : 'Task marked as incomplete', 'success');
-        })
-        .catch(error => {
-            console.error('Error updating task:', error);
-            showNotification('Error updating task!', 'error');
-        });
-    };
-    
-    /**
-     * Delete a task
-     * This function is called from the HTML onclick attribute
-     * @param {number} taskId - ID of the task to delete
-     */
-    window.deleteTask = function(taskId) {
-        // Confirm before deleting
-        if (!confirm('Are you sure you want to delete this task?')) {
-            return;
-        }
-        
-        fetch(`/api/tasks/${taskId}`, {
-            method: 'DELETE'
-        })
-        .then(response => response.json())
-        .then(data => {
-            loadTasks();
-            showNotification('Task deleted successfully!', 'success');
-        })
-        .catch(error => {
-            console.error('Error deleting task:', error);
-            showNotification('Error deleting task!', 'error');
-        });
-    };
-    
-    /**
-     * Show a notification message
-     * @param {string} message - Message to display
-     * @param {string} type - Type of notification (success, error)
-     */
-    function showNotification(message, type) {
-        // Create notification element
-        const notification = document.createElement('div');
-        notification.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            padding: 15px 25px;
-            background: ${type === 'success' ? '#10b981' : '#ef4444'};
-            color: white;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            z-index: 1000;
-            animation: slideIn 0.3s ease;
-        `;
-        notification.textContent = message;
-        
-        document.body.appendChild(notification);
-        
-        // Remove after 3 seconds
-        setTimeout(() => {
-            notification.style.animation = 'slideOut 0.3s ease';
-            setTimeout(() => {
-                document.body.removeChild(notification);
-            }, 300);
-        }, 3000);
-    }
-    
-    /**
-     * Escape HTML to prevent XSS attacks
-     * This is important for security when displaying user input
-     * @param {string} text - Text to escape
-     * @returns {string} - Escaped text
-     */
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
+// ─── State ────────────────────────────────────────────────────────────────────
+let activeFilter = '';
+let searchTimeout = null;
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    loadUser();
+    loadTasks();
+    loadStats();
+    initDarkMode();
+    initModal();
+    initSearch();
+    initFilters();
+    initSidebar();
 });
+
+// ─── User ─────────────────────────────────────────────────────────────────────
+async function loadUser() {
+    try {
+        const res  = await fetch('/api/me');
+        if (!res.ok) { window.location.href = '/auth'; return; }
+        const data = await res.json();
+        document.getElementById('sidebarUsername').textContent = data.username;
+        document.getElementById('userAvatar').textContent = data.username[0].toUpperCase();
+    } catch {
+        window.location.href = '/auth';
+    }
+}
+
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+    await fetch('/api/logout', { method: 'POST' });
+    window.location.href = '/auth';
+});
+
+// ─── Dark Mode ────────────────────────────────────────────────────────────────
+function initDarkMode() {
+    if (localStorage.getItem('darkMode') === 'true') {
+        document.body.classList.add('dark-mode');
+        document.getElementById('darkModeToggle').innerHTML = '<i class="fas fa-sun"></i>';
+    }
+}
+
+document.getElementById('darkModeToggle').addEventListener('click', () => {
+    document.body.classList.toggle('dark-mode');
+    const dark = document.body.classList.contains('dark-mode');
+    localStorage.setItem('darkMode', dark);
+    document.getElementById('darkModeToggle').innerHTML = dark
+        ? '<i class="fas fa-sun"></i>'
+        : '<i class="fas fa-moon"></i>';
+});
+
+// ─── Sidebar (mobile) ─────────────────────────────────────────────────────────
+function initSidebar() {
+    document.getElementById('menuToggle').addEventListener('click', () => {
+        document.getElementById('sidebar').classList.toggle('open');
+    });
+
+    // Nav items
+    document.querySelectorAll('.nav-item').forEach(item => {
+        item.addEventListener('click', e => {
+            e.preventDefault();
+            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+            item.classList.add('active');
+            activeFilter = item.dataset.filter || '';
+            loadTasks();
+            document.getElementById('sidebar').classList.remove('open');
+        });
+    });
+}
+
+// ─── Modal ────────────────────────────────────────────────────────────────────
+function initModal() {
+    const overlay = document.getElementById('modalOverlay');
+    const open    = () => overlay.classList.add('show');
+    const close   = () => overlay.classList.remove('show');
+
+    document.getElementById('openModalBtn').addEventListener('click', open);
+    document.getElementById('closeModalBtn').addEventListener('click', close);
+    document.getElementById('cancelBtn').addEventListener('click', close);
+
+    overlay.addEventListener('click', e => {
+        if (e.target === overlay) close();
+    });
+
+    // Set min date to today
+    document.getElementById('taskDeadline').min = new Date().toISOString().split('T')[0];
+
+    document.getElementById('taskForm').addEventListener('submit', async e => {
+        e.preventDefault();
+        const title    = document.getElementById('taskTitle').value.trim();
+        const deadline = document.getElementById('taskDeadline').value;
+        const priority = document.getElementById('taskPriority').value;
+        const category = document.getElementById('taskCategory').value;
+
+        if (!title || !deadline) return;
+
+        try {
+            const res = await fetch('/api/tasks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, deadline, priority, category })
+            });
+
+            if (!res.ok) throw new Error();
+
+            document.getElementById('taskForm').reset();
+            close();
+            loadTasks();
+            loadStats();
+            showToast('Task added! 🎉', 'success');
+        } catch {
+            showToast('Error adding task', 'error');
+        }
+    });
+}
+
+// ─── Search ───────────────────────────────────────────────────────────────────
+function initSearch() {
+    document.getElementById('searchInput').addEventListener('input', e => {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => loadTasks(), 300);
+    });
+}
+
+// ─── Filters ──────────────────────────────────────────────────────────────────
+function initFilters() {
+    document.getElementById('filterPriority').addEventListener('change', loadTasks);
+    document.getElementById('filterCategory').addEventListener('change', loadTasks);
+}
+
+// ─── Build query string ───────────────────────────────────────────────────────
+function buildQuery() {
+    const params = new URLSearchParams();
+
+    // Active filter from sidebar
+    if (activeFilter) {
+        const [key, val] = activeFilter.split('=');
+        params.set(key, val);
+    }
+
+    const search   = document.getElementById('searchInput').value.trim();
+    const priority = document.getElementById('filterPriority').value;
+    const category = document.getElementById('filterCategory').value;
+
+    if (search)   params.set('search', search);
+    if (priority) params.set('priority', priority);
+    if (category) params.set('category', category);
+
+    return params.toString() ? '?' + params.toString() : '';
+}
+
+// ─── Load Tasks ───────────────────────────────────────────────────────────────
+async function loadTasks() {
+    try {
+        const res   = await fetch('/api/tasks' + buildQuery());
+        const tasks = await res.json();
+        renderTasks(tasks);
+    } catch {
+        showToast('Error loading tasks', 'error');
+    }
+}
+
+// ─── Render Tasks ─────────────────────────────────────────────────────────────
+function renderTasks(tasks) {
+    const list  = document.getElementById('tasksList');
+    const empty = document.getElementById('emptyState');
+
+    list.innerHTML = '';
+
+    if (tasks.length === 0) {
+        empty.classList.add('show');
+        document.getElementById('taskCount').textContent = '0 tasks';
+        return;
+    }
+
+    empty.classList.remove('show');
+    document.getElementById('taskCount').textContent = `${tasks.length} task${tasks.length !== 1 ? 's' : ''}`;
+
+    tasks.forEach(task => {
+        const card = createTaskCard(task);
+        list.appendChild(card);
+    });
+}
+
+// ─── Create Task Card ─────────────────────────────────────────────────────────
+function createTaskCard(task) {
+    const card = document.createElement('div');
+    card.className = 'task-card' + (task.completed ? ' completed' : '');
+
+    const { text: deadlineText, cls: deadlineCls } = formatDeadline(task.deadline);
+
+    card.innerHTML = `
+        <div class="task-check" onclick="toggleTask(${task.id}, ${!task.completed})">
+            ${task.completed ? '<i class="fas fa-check"></i>' : ''}
+        </div>
+        <div class="task-body">
+            <div class="task-title">${escapeHtml(task.title)}</div>
+            <div class="task-meta">
+                <span class="${deadlineCls}">
+                    <i class="fas fa-calendar-alt"></i> ${deadlineText}
+                </span>
+                <span class="priority-badge priority-${task.priority}">${task.priority}</span>
+                <span class="category-badge">${task.category}</span>
+            </div>
+        </div>
+        <div class="task-actions">
+            <button class="btn-delete" onclick="deleteTask(${task.id})" title="Delete">
+                <i class="fas fa-trash"></i>
+            </button>
+        </div>
+    `;
+
+    return card;
+}
+
+// ─── Format Deadline ──────────────────────────────────────────────────────────
+function formatDeadline(dateStr) {
+    const deadline = new Date(dateStr + 'T00:00:00');
+    const today    = new Date();
+    today.setHours(0, 0, 0, 0);
+    const diff = Math.ceil((deadline - today) / 86400000);
+
+    const formatted = deadline.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+    if (diff < 0)  return { text: `Overdue · ${formatted}`,   cls: 'deadline-overdue' };
+    if (diff === 0) return { text: `Due today · ${formatted}`, cls: 'deadline-today' };
+    if (diff === 1) return { text: `Tomorrow · ${formatted}`,  cls: 'deadline-tomorrow' };
+    return { text: `${diff} days · ${formatted}`, cls: '' };
+}
+
+// ─── Toggle Task ──────────────────────────────────────────────────────────────
+async function toggleTask(id, completed) {
+    try {
+        await fetch(`/api/tasks/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ completed })
+        });
+        loadTasks();
+        loadStats();
+        if (completed) showToast('Task completed! 🎉', 'success');
+    } catch {
+        showToast('Error updating task', 'error');
+    }
+}
+
+// ─── Delete Task ──────────────────────────────────────────────────────────────
+async function deleteTask(id) {
+    if (!confirm('Delete this task?')) return;
+    try {
+        await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
+        loadTasks();
+        loadStats();
+        showToast('Task deleted', 'info');
+    } catch {
+        showToast('Error deleting task', 'error');
+    }
+}
+
+// ─── Stats & Progress ─────────────────────────────────────────────────────────
+async function loadStats() {
+    try {
+        const res  = await fetch('/api/stats');
+        const data = await res.json();
+
+        animateNumber('totalTasks',     data.total);
+        animateNumber('completedTasks', data.completed);
+        animateNumber('pendingTasks',   data.pending);
+        animateNumber('overdueTasks',   data.overdue);
+
+        renderProgress(data.categories);
+        renderCategorySidebar(data.categories);
+    } catch {}
+}
+
+function renderProgress(categories) {
+    const section = document.getElementById('progressSection');
+    section.innerHTML = '';
+
+    Object.entries(categories).forEach(([name, data]) => {
+        const pct = data.total > 0 ? Math.round((data.completed / data.total) * 100) : 0;
+        const card = document.createElement('div');
+        card.className = 'progress-card';
+        card.innerHTML = `
+            <div class="progress-card-header">
+                <span>${name}</span>
+                <span class="progress-pct">${pct}%</span>
+            </div>
+            <div class="progress-bar-track">
+                <div class="progress-bar-fill" style="width: ${pct}%"></div>
+            </div>
+            <p class="progress-sub">${data.completed} of ${data.total} done</p>
+        `;
+        section.appendChild(card);
+    });
+}
+
+function renderCategorySidebar(categories) {
+    const container = document.getElementById('sidebarCategories');
+    container.innerHTML = '<p class="sidebar-label">Categories</p>';
+
+    Object.entries(categories).forEach(([name, data]) => {
+        const item = document.createElement('a');
+        item.href = '#';
+        item.className = 'cat-item';
+        item.innerHTML = `<span>${name}</span><span class="cat-badge">${data.total}</span>`;
+        item.addEventListener('click', e => {
+            e.preventDefault();
+            document.getElementById('filterCategory').value = name;
+            loadTasks();
+        });
+        container.appendChild(item);
+    });
+}
+
+// ─── Animate Number ───────────────────────────────────────────────────────────
+function animateNumber(id, target) {
+    const el    = document.getElementById(id);
+    const start = parseInt(el.textContent) || 0;
+    const diff  = target - start;
+    const steps = 20;
+    let   step  = 0;
+
+    const timer = setInterval(() => {
+        step++;
+        el.textContent = Math.round(start + (diff * step / steps));
+        if (step >= steps) clearInterval(timer);
+    }, 16);
+}
+
+// ─── Toast ────────────────────────────────────────────────────────────────────
+function showToast(msg, type = 'info') {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.className = `toast ${type} show`;
+    setTimeout(() => toast.classList.remove('show'), 3000);
+}
+
+// ─── Escape HTML ──────────────────────────────────────────────────────────────
+function escapeHtml(text) {
+    const d = document.createElement('div');
+    d.textContent = text;
+    return d.innerHTML;
+}
